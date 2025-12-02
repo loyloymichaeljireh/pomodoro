@@ -1,13 +1,14 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Play, Pause, RotateCcw, Coffee, Settings, Volume2, VolumeX, Target } from 'lucide-react';
 import { SteamAnimation } from './SteamAnimation';
 type TimerMode = 'focus' | 'shortBreak' | 'longBreak';
 const TIMER_DURATIONS = {
-  focus: 25 * 60,
-  shortBreak: 5 * 60,
-  longBreak: 15 * 60
+  focus: 25 * 60,      // ✅ 25 minutes
+  shortBreak: 5 * 60, // ✅ 5 minutes
+  longBreak: 15 * 60  // ✅ 15 minutes
 };
+
 const MODE_LABELS = {
   focus: 'Focus',
   shortBreak: 'Short Break',
@@ -22,9 +23,11 @@ interface PomodoroStats {
 }
 export function PomodoroTimer() {
   const [mode, setMode] = useState<TimerMode>('focus');
+  const [showSoundModal, setShowSoundModal] = useState(false);
   const [timeLeft, setTimeLeft] = useState(TIMER_DURATIONS[mode]);
   const [isRunning, setIsRunning] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const completionAudio = useRef<HTMLAudioElement | null>(null);
   const [showCelebration, setShowCelebration] = useState(false);
   const [stats, setStats] = useState<PomodoroStats>(() => {
     const saved = localStorage.getItem('pomodoroStats');
@@ -44,6 +47,11 @@ export function PomodoroTimer() {
     setIsRunning(false);
   }, [mode]);
   useEffect(() => {
+  completionAudio.current = new Audio('/sounds/bell.mp3');
+  completionAudio.current.volume = 0.6;
+}, []);
+
+  useEffect(() => {
     if (!isRunning) return;
     const interval = setInterval(() => {
       setTimeLeft(prev => {
@@ -57,42 +65,61 @@ export function PomodoroTimer() {
     return () => clearInterval(interval);
   }, [isRunning, mode]);
   const handleTimerComplete = () => {
-    setIsRunning(false);
+  setIsRunning(false);
+
+  if (mode === 'focus') {
+    setStats(prev => ({
+      ...prev,
+      completedSessions: prev.completedSessions + 1
+    }));
+  }
+
+  if (stats.soundEnabled) {
+    playCompletionSound(); // ✅ only handles sound + modal now
+  } else {
+    setShowSoundModal(true); // ✅ still block UI even if muted
+  }
+};
+
+const playCompletionSound = () => {
+  if (completionAudio.current) {
+    completionAudio.current.currentTime = 0;
+    completionAudio.current.loop = true; // ✅ keeps ringing
+    completionAudio.current.play().catch(() => {});
+    setShowSoundModal(true); // ✅ show lock modal
+  }
+};
+const stopCompletionSound = () => {
+  if (completionAudio.current) {
+    completionAudio.current.pause();
+    completionAudio.current.currentTime = 0;
+    completionAudio.current.loop = false;
+  }
+
+  setShowSoundModal(false);
+
+  // ✅ NOW safely move to the next session
+  setTimeout(() => {
+    let nextMode: TimerMode;
+
     if (mode === 'focus') {
-      setStats(prev => ({
-        ...prev,
-        completedSessions: prev.completedSessions + 1
-      }));
-      setShowCelebration(true);
-      setTimeout(() => setShowCelebration(false), 2000);
+      nextMode =
+        stats.completedSessions % 4 === 3 ? 'longBreak' : 'shortBreak';
+    } else {
+      nextMode = 'focus';
     }
-    if (stats.soundEnabled) {
-      playCompletionSound();
-    }
+
+    setMode(nextMode);
+    setTimeLeft(TIMER_DURATIONS[nextMode]); // ✅ FIX: reload timer
+
     if (stats.autoStart) {
-      setTimeout(() => {
-        if (mode === 'focus') {
-          setMode(stats.completedSessions % 4 === 3 ? 'longBreak' : 'shortBreak');
-        } else {
-          setMode('focus');
-        }
-        setIsRunning(true);
-      }, 2000);
+      setIsRunning(true); // ✅ restart only AFTER user clicks OK
     }
-  };
-  const playCompletionSound = () => {
-    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-    const oscillator = audioContext.createOscillator();
-    const gainNode = audioContext.createGain();
-    oscillator.connect(gainNode);
-    gainNode.connect(audioContext.destination);
-    oscillator.frequency.value = 800;
-    oscillator.type = 'sine';
-    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
-    oscillator.start(audioContext.currentTime);
-    oscillator.stop(audioContext.currentTime + 0.5);
-  };
+  }, 100);
+};
+
+
+
   const toggleTimer = () => setIsRunning(!isRunning);
   const resetTimer = () => {
     setIsRunning(false);
@@ -366,5 +393,31 @@ export function PomodoroTimer() {
           </div>
         </div>
       </motion.div>
+
+      {showSoundModal && (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+    <div className="bg-card rounded-2xl p-8 w-[90%] max-w-sm text-center shadow-2xl">
+
+      <div className="text-5xl mb-4">⏰</div>
+
+      <h2 className="text-xl font-semibold text-text mb-2">
+        Time's Up!
+      </h2>
+
+      <p className="text-text-secondary mb-6">
+        Your Time is complete.
+      </p>
+
+      <button
+        onClick={stopCompletionSound}
+        className="w-full py-3 rounded-xl bg-primary text-background font-medium hover:opacity-90 transition"
+      >
+        OK
+      </button>
+
+    </div>
+  </div>
+)}
+
     </div>;
 }
